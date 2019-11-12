@@ -15,10 +15,10 @@ pub use self::data::Data;
 /// This allows the user to provide a custom, more rust-esque callback function type that takes
 /// greater advantage of rust's type safety.
 pub type InputProcFn = FnMut(*mut sys::AudioUnitRenderActionFlags,
-                             *const sys::AudioTimeStamp,
-                             sys::UInt32,
-                             sys::UInt32,
-                             *mut sys::AudioBufferList) -> sys::OSStatus;
+    *const sys::AudioTimeStamp,
+    sys::UInt32,
+    sys::UInt32,
+    *mut sys::AudioBufferList) -> sys::OSStatus;
 
 /// This type allows us to safely wrap a boxed `RenderCallback` to use within the input proc.
 pub struct InputProcFnWrapper {
@@ -172,7 +172,6 @@ pub mod data {
     }
 
     impl<S> NonInterleaved<S> {
-
         /// An iterator yielding a reference to each channel in the array.
         pub fn channels(&self) -> Channels<S> {
             Channels {
@@ -190,7 +189,6 @@ pub mod data {
                 sample_format: PhantomData,
             }
         }
-
     }
 
     // Implementation for a non-interleaved linear PCM audio format.
@@ -201,7 +199,7 @@ pub mod data {
             // TODO: This is never set, even though the default ABSD on OS X is non-interleaved!
             // Should really investigate why this is.
             // format.flags.contains(linear_pcm_flags::IS_NON_INTERLEAVED) &&
-                S::sample_format().does_match_flags(format.flags)
+            S::sample_format().does_match_flags(format.flags)
         }
 
         #[allow(non_snake_case)]
@@ -216,14 +214,13 @@ pub mod data {
             }
         }
     }
-
 }
 
 pub mod action_flags {
     use std::fmt;
     use sys;
 
-    bitflags!{
+    bitflags! {
         pub struct ActionFlags: u32 {
             /// Called on a render notification Proc, which is called either before or after the
             /// render operation of the audio unit. If this flag is set, the proc is being called
@@ -305,7 +302,6 @@ pub mod action_flags {
     }
 
     impl Handle {
-
         /// Retrieve the current state of the `ActionFlags`.
         pub fn get(&self) -> ActionFlags {
             ActionFlags::from_bits_truncate(unsafe { *self.ptr })
@@ -365,7 +361,6 @@ pub mod action_flags {
         pub fn from_ptr(ptr: *mut sys::AudioUnitRenderActionFlags) -> Self {
             Handle { ptr: ptr }
         }
-
     }
 
     unsafe impl Send for Handle {}
@@ -391,9 +386,9 @@ pub mod action_flags {
 impl AudioUnit {
     /// Pass a render callback (aka "Input Procedure") to the **AudioUnit**.
     pub fn set_render_callback<F, D>(&mut self, mut f: F) -> Result<(), Error>
-    where
-        F: FnMut(Args<D>) -> Result<(), ()> + 'static,
-        D: Data,
+        where
+            F: FnMut(Args<D>) -> Result<(), ()> + 'static,
+            D: Data,
     {
         // First, we'll retrieve the stream format so that we can ensure that the given callback
         // format matches the audio unit's format.
@@ -416,24 +411,24 @@ impl AudioUnit {
                                   in_bus_number: sys::UInt32,
                                   in_number_frames: sys::UInt32,
                                   io_data: *mut sys::AudioBufferList| -> sys::OSStatus
-        {
-            let args = unsafe {
-                let data = D::from_input_proc_args(in_number_frames, io_data);
-                let flags = action_flags::Handle::from_ptr(io_action_flags);
-                Args {
-                    data: data,
-                    time_stamp: *in_time_stamp,
-                    flags: flags,
-                    bus_number: in_bus_number as u32,
-                    num_frames: in_number_frames as usize,
+            {
+                let args = unsafe {
+                    let data = D::from_input_proc_args(in_number_frames, io_data);
+                    let flags = action_flags::Handle::from_ptr(io_action_flags);
+                    Args {
+                        data: data,
+                        time_stamp: *in_time_stamp,
+                        flags: flags,
+                        bus_number: in_bus_number as u32,
+                        num_frames: in_number_frames as usize,
+                    }
+                };
+
+                match f(args) {
+                    Ok(()) => 0 as sys::OSStatus,
+                    Err(()) => error::Error::Unspecified.to_os_status(),
                 }
             };
-
-            match f(args) {
-                Ok(()) => 0 as sys::OSStatus,
-                Err(()) => error::Error::Unspecified.to_os_status(),
-            }
-        };
 
         let input_proc_fn_wrapper = Box::new(InputProcFnWrapper {
             callback: Box::new(input_proc_fn),
@@ -463,10 +458,11 @@ impl AudioUnit {
     }
 
     /// Pass an input callback (aka "Input Procedure") to the **AudioUnit**.
+    #[cfg(target_os = "macos")]
     pub fn set_input_callback<F, D>(&mut self, mut f: F) -> Result<(), Error>
-    where
-        F: FnMut(Args<D>) -> Result<(), ()> + 'static,
-        D: Data,
+        where
+            F: FnMut(Args<D>) -> Result<(), ()> + 'static,
+            D: Data,
     {
         // First, we'll retrieve the stream format so that we can ensure that the given callback
         // format matches the audio unit's format.
@@ -489,6 +485,7 @@ impl AudioUnit {
         let n_channels = stream_format.channels_per_frame;
         let data_byte_size = buffer_frame_size * sample_bytes as u32 * n_channels;
         data.reserve_exact(data_byte_size as usize);
+
         let audio_buffer = sys::AudioBuffer {
             mDataByteSize: data_byte_size,
             mNumberChannels: n_channels,
@@ -519,75 +516,75 @@ impl AudioUnit {
                                   in_bus_number: sys::UInt32,
                                   in_number_frames: sys::UInt32,
                                   _io_data: *mut sys::AudioBufferList| -> sys::OSStatus
-        {
-            // If the buffer size has changed, ensure the AudioBuffer is the correct size.
-            if buffer_frame_size != in_number_frames {
-                unsafe {
-                    // Retrieve the up-to-date stream format.
-                    let id = sys::kAudioUnitProperty_StreamFormat;
-                    let asbd = match super::get_property(audio_unit, id, Scope::Input, Element::Output) {
-                        Err(err) => return err.to_os_status(),
-                        Ok(asbd) => asbd,
-                    };
-                    let stream_format = match super::StreamFormat::from_asbd(asbd) {
-                        Err(err) => return err.to_os_status(),
-                        Ok(fmt) => fmt,
-                    };
-                    let sample_bytes = stream_format.sample_format.size_in_bytes();
-                    let n_channels = stream_format.channels_per_frame;
-                    let data_byte_size = in_number_frames as usize
-                        * sample_bytes
-                        * n_channels as usize;
-                    let ptr = (*audio_buffer_list_ptr).mBuffers.as_ptr() as *const sys::AudioBuffer;
-                    let len = (*audio_buffer_list_ptr).mNumberBuffers as usize;
-                    let buffers: &[sys::AudioBuffer] = slice::from_raw_parts(ptr, len);
-                    for &buffer in buffers {
-                        let ptr = buffer.mData as *mut u8;
-                        let len = buffer.mDataByteSize as usize;
-                        let cap = len;
-                        let mut vec = Vec::from_raw_parts(ptr, len, cap);
-                        if len < data_byte_size {
-                            vec.reserve_exact(data_byte_size - len);
-                        } else if len > data_byte_size {
-                            vec.truncate(data_byte_size);
+            {
+                // If the buffer size has changed, ensure the AudioBuffer is the correct size.
+                if buffer_frame_size != in_number_frames {
+                    unsafe {
+                        // Retrieve the up-to-date stream format.
+                        let id = sys::kAudioUnitProperty_StreamFormat;
+                        let asbd = match super::get_property(audio_unit, id, Scope::Input, Element::Output) {
+                            Err(err) => return err.to_os_status(),
+                            Ok(asbd) => asbd,
+                        };
+                        let stream_format = match super::StreamFormat::from_asbd(asbd) {
+                            Err(err) => return err.to_os_status(),
+                            Ok(fmt) => fmt,
+                        };
+                        let sample_bytes = stream_format.sample_format.size_in_bytes();
+                        let n_channels = stream_format.channels_per_frame;
+                        let data_byte_size = in_number_frames as usize
+                            * sample_bytes
+                            * n_channels as usize;
+                        let ptr = (*audio_buffer_list_ptr).mBuffers.as_ptr() as *const sys::AudioBuffer;
+                        let len = (*audio_buffer_list_ptr).mNumberBuffers as usize;
+                        let buffers: &[sys::AudioBuffer] = slice::from_raw_parts(ptr, len);
+                        for &buffer in buffers {
+                            let ptr = buffer.mData as *mut u8;
+                            let len = buffer.mDataByteSize as usize;
+                            let cap = len;
+                            let mut vec = Vec::from_raw_parts(ptr, len, cap);
+                            if len < data_byte_size {
+                                vec.reserve_exact(data_byte_size - len);
+                            } else if len > data_byte_size {
+                                vec.truncate(data_byte_size);
+                            }
+                            mem::forget(vec);
                         }
-                        mem::forget(vec);
+                    }
+                    buffer_frame_size = in_number_frames;
+                }
+
+                unsafe {
+                    let status = sys::AudioUnitRender(
+                        audio_unit,
+                        io_action_flags,
+                        in_time_stamp,
+                        in_bus_number,
+                        in_number_frames,
+                        audio_buffer_list_ptr,
+                    );
+                    if status != 0 {
+                        return status;
                     }
                 }
-                buffer_frame_size = in_number_frames;
-            }
 
-            unsafe {
-                let status = sys::AudioUnitRender(
-                    audio_unit,
-                    io_action_flags,
-                    in_time_stamp,
-                    in_bus_number,
-                    in_number_frames,
-                    audio_buffer_list_ptr,
-                );
-                if status != 0 {
-                    return status;
-                }
-            }
+                let args = unsafe {
+                    let data = D::from_input_proc_args(in_number_frames, audio_buffer_list_ptr);
+                    let flags = action_flags::Handle::from_ptr(io_action_flags);
+                    Args {
+                        data: data,
+                        time_stamp: *in_time_stamp,
+                        flags: flags,
+                        bus_number: in_bus_number as u32,
+                        num_frames: in_number_frames as usize,
+                    }
+                };
 
-            let args = unsafe {
-                let data = D::from_input_proc_args(in_number_frames, audio_buffer_list_ptr);
-                let flags = action_flags::Handle::from_ptr(io_action_flags);
-                Args {
-                    data: data,
-                    time_stamp: *in_time_stamp,
-                    flags: flags,
-                    bus_number: in_bus_number as u32,
-                    num_frames: in_number_frames as usize,
+                match f(args) {
+                    Ok(()) => 0 as sys::OSStatus,
+                    Err(()) => error::Error::Unspecified.to_os_status(),
                 }
             };
-
-            match f(args) {
-                Ok(()) => 0 as sys::OSStatus,
-                Err(()) => error::Error::Unspecified.to_os_status(),
-            }
-        };
 
         let input_proc_fn_wrapper = Box::new(InputProcFnWrapper {
             callback: Box::new(input_proc_fn),
